@@ -33,7 +33,7 @@ fi
 : > "$RT/inbox.jsonl"
 : > "$RT/outbox.jsonl"
 echo 0 > "$RT/inbox.cursor"
-rm -f "$RT/stop" "$RT/barged" "$RT/speaking.lock" "$RT/owner_session" "$RT/listen.ready"
+rm -f "$RT/stop" "$RT/interrupt" "$RT/barged" "$RT/speaking.lock" "$RT/owner_session" "$RT/listen.ready"
 touch "$RT/heartbeat" "$RT/last_heard"
 
 nohup "${PY[@]}" bin/listen.py </dev/null >>logs/listen.log 2>&1 &

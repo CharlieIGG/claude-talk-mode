@@ -37,6 +37,7 @@ WORKING = RT / "working"            # Claude is handling a turn (not listening)
 LISTEN_PID = RT / "listen.pid"
 SPEAK_PID = RT / "speak.pid"
 SERVER_PID = RT / "server.pid"      # only present if start.sh started the server
+INTERRUPT = RT / "interrupt"        # what the user said to interrupt Claude; cleared once Claude listens again
 
 EXIT_MARK = "__TALK_EXIT__"
 NO_SPEECH = "__NO_SPEECH__"
@@ -169,6 +170,7 @@ def cmd_wait(timeout):
     idle_s = load_config()["session"]["idle_minutes"] * 60
     start = time.time()
     WORKING.unlink(missing_ok=True)         # listening now, so no "working" ticks
+    INTERRUPT.unlink(missing_ok=True)       # an interrupt is over once Claude listens
     while True:
         touch(HEARTBEAT)
         if STOP_FLAG.exists():
@@ -203,6 +205,15 @@ def cmd_reply(text):
     touch(HEARTBEAT)
     touch(LAST_HEARD)        # idle means nobody spoke, so a long task doesn't count
     return 0
+
+
+def interrupt_note(bin_dir):
+    said = INTERRUPT.read_text().strip()
+    return (f"The user interrupted you by voice, saying \"{said}\". Stop the task you "
+            "were on now and do not continue it. Say in one short sentence with "
+            f"{bin_dir}/reply.sh that you stopped and ask what they want, then run "
+            f"{bin_dir}/next_turn.sh 540 with the Bash timeout set to 600000. Every "
+            "other tool call is refused until you do.")
 
 
 def emit_context(event, text):
@@ -249,10 +260,26 @@ def cmd_hook():
                      "usual; do not call next_turn.sh or reply.sh.")
         return 0
 
+    if event == "PreToolUse":
+        # After an interrupt phrase, refuse everything but talk mode's own scripts.
+        if not INTERRUPT.exists() or SCRIPT_MARK + "bin/" in command \
+                or SCRIPT_MARK + "scripts/" in command:
+            return 0
+        reason = ("The user interrupted this work by voice. Stop now and return what "
+                  "you have so far.") if data.get("agent_id") else interrupt_note(bin_dir)
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": event, "permissionDecision": "deny",
+            "permissionDecisionReason": reason}}))
+        return 0
+
     if event == "PostToolUse":
         if SCRIPT_MARK + "bin/next_turn.sh" in command or SCRIPT_MARK + "scripts/" in command:
             return 0
         if data.get("agent_id"):            # a subagent's tool call: leave it to the main loop
+            return 0
+        if INTERRUPT.exists():
+            if SCRIPT_MARK + "bin/" not in command:   # reply.sh means it is being handled
+                emit_context(event, interrupt_note(bin_dir))
             return 0
         if STOP_FLAG.exists():
             emit_context(event, "The user ended talk mode by voice. Say a one-sentence "
@@ -277,6 +304,9 @@ def cmd_hook():
     if event == "Stop":
         if STOP_FLAG.exists():
             return 0
+        if INTERRUPT.exists():
+            print(json.dumps({"decision": "block", "reason": interrupt_note(bin_dir)}))
+            return 0
         print(json.dumps({"decision": "block", "reason": (
             "Talk mode is still on, so keep the voice loop going. If you have not "
             f"spoken your answer yet, run {bin_dir}/reply.sh with a short spoken "
@@ -299,7 +329,7 @@ def cmd_stop(quick=False, quiet=False):
     kill(read_pid(SPEAKING))                # a `say` still talking
     kill(read_pid(SPEAK_PID))
     kill(read_pid(SERVER_PID))
-    for p in (INBOX, OUTBOX, CURSOR, CURSOR_LOCK, STOP_FLAG, SPEAKING, BARGED, WORKING,
+    for p in (INBOX, OUTBOX, CURSOR, CURSOR_LOCK, STOP_FLAG, SPEAKING, BARGED, WORKING, INTERRUPT,
               LISTEN_PID, SPEAK_PID, SERVER_PID, HEARTBEAT, LAST_HEARD,
               RT / "listen.ready", RT / "listen.device", RT / "silent.aiff"):
         p.unlink(missing_ok=True)

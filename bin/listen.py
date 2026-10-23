@@ -4,7 +4,8 @@
 The mic is read through ffmpeg (avfoundation), so no Python audio packages are
 needed. A turn ends after a pause. When barge-in is on (headphones), speaking
 over the assistant for a moment stops its voice and drops queued replies.
-Saying a stop phrase closes the mic right away.
+Saying a stop phrase closes the mic right away; an interrupt phrase stops
+Claude at its next tool call.
 
 Usage:  listen.py              live microphone (device from config.json)
         listen.py --file X.wav feed a recording instead (for testing)
@@ -61,6 +62,24 @@ def is_junk(text):
 
 def normalize(text):
     return " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+
+
+COMMAND_EXTRA_WORDS = 3   # "okay, stop talk mode please" still counts; a long sentence does not
+
+
+def said_alone(text, phrases):
+    """True when the utterance is one of the phrases on its own (repeats allowed),
+    give or take a few words, so mentioning a phrase inside a longer sentence
+    does not trigger it."""
+    for phrase in phrases:
+        rest = f" {normalize(text)} "
+        if f" {phrase} " not in rest:
+            continue
+        while f" {phrase} " in rest:
+            rest = rest.replace(f" {phrase} ", " ")
+        if len(rest.split()) <= COMMAND_EXTRA_WORDS:
+            return True
+    return False
 
 
 def input_device(cfg):
@@ -139,6 +158,7 @@ def main(argv):
     vad = cfg["vad"]
     barge_in = bool(cfg.get("barge_in"))
     stop_phrases = [normalize(p) for p in cfg.get("stop_phrases", [])]
+    interrupt_phrases = [normalize(p) for p in cfg.get("interrupt_phrases", [])]
     idle_s = cfg["session"]["idle_minutes"] * 60
     silence_frames = max(1, vad["silence_ms"] // FRAME_MS)
     min_speech_frames = max(1, vad["min_speech_ms"] // FRAME_MS)
@@ -166,11 +186,20 @@ def main(argv):
             if not text or is_junk(text):
                 tc.log("[listen] turn discarded as noise")
                 continue
-            if any(p in normalize(text) for p in stop_phrases):
+            if said_alone(text, stop_phrases):
                 tc.request_stop("stop-phrase")
                 tc.log("[listen] stop phrase heard, closing the microphone")
                 stopping.set()
                 return
+            # While Claude is busy, an interrupt phrase makes the hooks refuse its
+            # next tool call instead of waiting in the inbox (see talkctl.cmd_hook).
+            if said_alone(text, interrupt_phrases) and tc.ACTIVE.exists() \
+                    and tc.WORKING.exists():
+                tc.INTERRUPT.write_text(text)
+                tc.play_cue("interrupt", cfg)
+                tc.touch(tc.LAST_HEARD)
+                tc.log("[listen] interrupt phrase heard, Claude's next tool call is refused")
+                continue
             rec = {"ts": time.time(), "text": text, "interrupted": interrupted}
             with open(tc.INBOX, "a") as f:
                 f.write(json.dumps(rec) + "\n")

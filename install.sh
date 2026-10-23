@@ -45,7 +45,7 @@ jq --arg cmd "$HOOK" --argjson rules "$rules" '
       | if any(.[]; any(.hooks[]?; .command == $cmd)) then .
         else . + [{"hooks": [{"type": "command", "command": $cmd, "timeout": 10}]}] end);
   .hooks = (.hooks // {})
-  | addhook("PostToolUse") | addhook("Stop") | addhook("UserPromptSubmit")
+  | addhook("PreToolUse") | addhook("PostToolUse") | addhook("Stop") | addhook("UserPromptSubmit")
   | addhook("PermissionRequest")
   | .permissions = (.permissions // {})
   | .permissions.allow = ((.permissions.allow // []) as $a

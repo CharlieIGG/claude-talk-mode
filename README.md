@@ -80,6 +80,10 @@ and settings, so re-run it if you move the folder.
   of a second, and replies it had queued are dropped.
 - **Change course mid-task:** just say it. Claude receives it after its current step,
   usually within seconds.
+- **Make Claude stop working:** say "hold on" or "hang on" on its own while Claude is
+  busy. You hear a "Submarine" sound, and from then on every tool call Claude tries is
+  refused (its subagents' too) until it has asked you what you want. A command that is
+  already running still finishes first, and so does a stretch where Claude only writes.
 - **Stop:** say "stop talk mode" (the microphone closes immediately), press Esc and then
   type anything, or stay silent for 10 minutes.
 - **Permission prompts:** if Claude Code asks for approval during talk mode, you hear a
@@ -141,9 +145,10 @@ active microphone, a double tap stays "next track".
 | `barge_in` | `true` with headphones. Set `false` with laptop speakers, or Claude interrupts itself. |
 | `stt.model`, `stt.language`, `stt.port` | Whisper model, language and local port. |
 | `tts.voice`, `tts.rate` | Voice and speed in words per minute. More voices: System Settings → Accessibility → Spoken Content. If the voice is missing, the system voice is used. |
-| `cues.*` | Sound files and volumes for "heard you", "still working" and "approval needed" (`""` switches one off). |
+| `cues.*` | Sound files and volumes for "heard you", "still working", "approval needed" and "interrupt heard" (`""` switches one off). |
 | `session.idle_minutes` | Silence after which talk mode ends. |
-| `stop_phrases` | Phrases that end talk mode instantly. |
+| `stop_phrases` | Phrases that end talk mode instantly, when said on their own (up to three extra words such as "okay" or "please"); inside a longer sentence they are ignored. |
+| `interrupt_phrases` | Phrases that stop Claude's work, under the same "said on their own" rule. Pick words you rarely use otherwise ("wait" is too common). |
 
 ## Privacy and security
 
