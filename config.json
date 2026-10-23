@@ -1,0 +1,40 @@
+{
+  "audio": {
+    "input_device": "default"
+  },
+  "vad": {
+    "min_threshold": 0.012,
+    "noise_multiplier": 3.0,
+    "silence_ms": 1200,
+    "min_speech_ms": 400,
+    "barge_in_ms": 300
+  },
+  "barge_in": true,
+  "stt": {
+    "model": "models/ggml-small.en.bin",
+    "port": 2023,
+    "language": "en"
+  },
+  "tts": {
+    "voice": "Ava (Enhanced)",
+    "rate": 215
+  },
+  "cues": {
+    "heard": "/System/Library/Sounds/Glass.aiff",
+    "heard_volume": 0.5,
+    "working": "/System/Library/Sounds/Pop.aiff",
+    "working_volume": 0.25,
+    "working_every_s": 4,
+    "attention": "/System/Library/Sounds/Hero.aiff",
+    "attention_volume": 0.7
+  },
+  "session": {
+    "idle_minutes": 10
+  },
+  "stop_phrases": [
+    "stop talk mode",
+    "end talk mode",
+    "exit talk mode",
+    "talk mode off"
+  ]
+}
