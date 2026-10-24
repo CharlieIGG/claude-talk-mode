@@ -76,8 +76,12 @@ and settings, so re-run it if you move the folder.
 - **Talk:** just speak. A pause of about 1.2 seconds ends your turn.
 - **Sounds:** a "Glass" chime when your turn ends means "heard you". A quiet "Pop" every
   4 seconds means Claude is still working on it.
+- **Spoken status:** if Claude has worked for a minute without saying anything, you hear
+  "Still working. Right now: ..." with what it is doing at that moment (taken from its
+  current command), repeated every minute. Useful when the pops are drowned out.
 - **Interrupt:** start talking while Claude speaks. Its voice stops within about a third
-  of a second, and replies it had queued are dropped.
+  of a second, and replies it had queued are dropped. Headphones only: on speakers the
+  microphone ignores everything while Claude speaks, so it doesn't hear itself.
 - **Change course mid-task:** just say it. Claude receives it after its current step,
   usually within seconds.
 - **Make Claude stop working:** say "hold on" or "hang on" on its own while Claude is
@@ -142,11 +146,12 @@ active microphone, a double tap stays "next track".
 | `vad.silence_ms` | Pause that ends your turn. |
 | `vad.min_threshold`, `vad.noise_multiplier` | How loud counts as speech. The room is measured at start; raise these if background noise triggers it. |
 | `vad.barge_in_ms` | How long you must talk before Claude's voice stops (so a cough doesn't). |
-| `barge_in` | `true` with headphones. Set `false` with laptop speakers, or Claude interrupts itself. |
+| `barge_in` | `"auto"` (default) checks the macOS output every 5 seconds: on headphones (Bluetooth, or a device named headphones/headset) talking over Claude stops its voice; on speakers that is switched off and the microphone ignores Claude's own voice and sounds, so it cannot hear itself. `true` / `false` force one behaviour. |
 | `stt.model`, `stt.language`, `stt.port` | Whisper model, language and local port. |
 | `tts.voice`, `tts.rate` | Voice and speed in words per minute. More voices: System Settings → Accessibility → Spoken Content. If the voice is missing, the system voice is used. |
 | `cues.*` | Sound files and volumes for "heard you", "still working", "approval needed" and "interrupt heard" (`""` switches one off). |
 | `session.idle_minutes` | Silence after which talk mode ends. |
+| `session.status_every_s` | Seconds of Claude working silently before a spoken "still working" update, and between updates (`0` switches them off). |
 | `stop_phrases` | Phrases that end talk mode instantly, when said on their own (up to three extra words such as "okay" or "please"); inside a longer sentence they are ignored. |
 | `interrupt_phrases` | Phrases that stop Claude's work, under the same "said on their own" rule. Pick words you rarely use otherwise ("wait" is too common). |
 

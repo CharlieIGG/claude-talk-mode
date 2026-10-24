@@ -59,16 +59,44 @@ def tick_due(every, last_tick, last_spoke):
     return now - quiet_since >= every and now - last_tick >= every
 
 
+def status_due(every, last_status, last_spoke):
+    """True when a spoken "still working" update is due: Claude has been handling
+    a turn for `every` seconds without saying anything. A long tool call keeps it
+    going; without one, it stops 2 minutes after the last hook activity (e.g. the
+    user pressed Esc), and after 20 minutes in any case."""
+    if not every or not tc.WORKING.exists() or tc.SPEAKING.exists() or tc.STOP_FLAG.exists():
+        return False
+    quiet_hooks = tc.age(tc.HEARTBEAT)
+    if quiet_hooks > 20 * 60 or (quiet_hooks > 120 and not tc.STEP.exists()):
+        return False
+    now = time.time()
+    return now - max(now - tc.age(tc.WORKING), last_spoke, last_status) >= every
+
+
+def status_text():
+    try:
+        step = tc.STEP.read_text().strip()
+    except OSError:
+        step = ""
+    if not step:
+        return "Still working, thinking it through."
+    return f"Still working. Right now: {step[0].lower() + step[1:]}."
+
+
 def main():
     cfg = tc.load_config()
     tts = cfg["tts"]
     every = cfg.get("cues", {}).get("working_every_s", 4)
+    status_every = cfg["session"].get("status_every_s", 120)
     tc.OUTBOX.touch(exist_ok=True)
     pos = tc.OUTBOX.stat().st_size
     tc.log(f"[speak] ready (voice: {tts.get('voice') or 'system default'})")
     started = time.time()
-    last_tick = last_spoke = 0.0
+    last_tick = last_spoke = last_status = 0.0
     while True:
+        if status_due(status_every, last_status, last_spoke):
+            say(speakable(status_text()), tts)
+            last_status = last_spoke = time.time()
         if tick_due(every, last_tick, last_spoke):
             tc.play_cue("working", cfg)
             last_tick = time.time()

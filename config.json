@@ -9,7 +9,7 @@
     "min_speech_ms": 400,
     "barge_in_ms": 300
   },
-  "barge_in": true,
+  "barge_in": "auto",
   "stt": {
     "model": "models/ggml-small.en.bin",
     "port": 2023,
@@ -31,7 +31,8 @@
     "interrupt_volume": 0.7
   },
   "session": {
-    "idle_minutes": 10
+    "idle_minutes": 10,
+    "status_every_s": 60
   },
   "stop_phrases": [
     "stop talk mode",

@@ -31,12 +31,14 @@ OWNER = RT / "owner_session"        # Claude Code session id that started talk m
 HEARTBEAT = RT / "heartbeat"        # touched whenever the owning session is active
 LAST_HEARD = RT / "last_heard"      # touched whenever the user says something
 STOP_FLAG = RT / "stop"             # contains the reason the session should end
+CUE_AT = RT / "cue_at"              # touched whenever a feedback sound starts
 SPEAKING = RT / "speaking.lock"     # contains the pid of the running `say`
 BARGED = RT / "barged"              # the user talked over the speaker
 WORKING = RT / "working"            # Claude is handling a turn (not listening)
 LISTEN_PID = RT / "listen.pid"
 SPEAK_PID = RT / "speak.pid"
 SERVER_PID = RT / "server.pid"      # only present if start.sh started the server
+STEP = RT / "step"                  # what Claude is doing right now, for spoken status updates
 INTERRUPT = RT / "interrupt"        # what the user said to interrupt Claude; cleared once Claude listens again
 
 EXIT_MARK = "__TALK_EXIT__"
@@ -109,6 +111,7 @@ def play_cue(name, cfg=None):
     if os.environ.get("HF_SILENT"):
         log(f"[cue] {name}")
         return
+    touch(CUE_AT)
     subprocess.Popen(["afplay", "-v", str(cues.get(name + "_volume", 0.5)), padded(path)],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -171,6 +174,7 @@ def cmd_wait(timeout):
     start = time.time()
     WORKING.unlink(missing_ok=True)         # listening now, so no "working" ticks
     INTERRUPT.unlink(missing_ok=True)       # an interrupt is over once Claude listens
+    STEP.unlink(missing_ok=True)
     while True:
         touch(HEARTBEAT)
         if STOP_FLAG.exists():
@@ -205,6 +209,32 @@ def cmd_reply(text):
     touch(HEARTBEAT)
     touch(LAST_HEARD)        # idle means nobody spoke, so a long task doesn't count
     return 0
+
+
+def step_label(tool, tool_input):
+    """A few spoken words for what a tool call does, or None if not worth saying."""
+    if not isinstance(tool_input, dict):
+        return None
+    name = Path(tool_input.get("file_path") or tool_input.get("notebook_path") or "").name
+    if tool in ("Bash", "Agent", "Task"):
+        return tool_input.get("description") or None
+    if tool == "Read" and name:
+        return f"reading {name}"
+    if tool in ("Edit", "Write", "NotebookEdit") and name:
+        return f"editing {name}"
+    if tool in ("Grep", "Glob"):
+        return "searching files"
+    if tool in ("WebSearch", "WebFetch"):
+        return "searching the web"
+    if tool.startswith("mcp__"):
+        server = tool.split("__")[1]                 # claude_ai_Microsoft_365, plugin_<plugin>_atlassian
+        if server.startswith("claude_ai_"):
+            server = server[len("claude_ai_"):]
+        elif server.startswith("plugin_"):
+            server = server.split("_", 2)[-1]
+        server = server.removesuffix("-mcp")
+        return f"working in {server.replace('_', ' ').replace('-', ' ')}"
+    return None
 
 
 def interrupt_note(bin_dir):
@@ -262,8 +292,12 @@ def cmd_hook():
 
     if event == "PreToolUse":
         # After an interrupt phrase, refuse everything but talk mode's own scripts.
-        if not INTERRUPT.exists() or SCRIPT_MARK + "bin/" in command \
-                or SCRIPT_MARK + "scripts/" in command:
+        if SCRIPT_MARK + "bin/" in command or SCRIPT_MARK + "scripts/" in command:
+            return 0
+        if not INTERRUPT.exists():
+            label = step_label(data.get("tool_name", ""), tool_input)
+            if label:
+                STEP.write_text(label)
             return 0
         reason = ("The user interrupted this work by voice. Stop now and return what "
                   "you have so far.") if data.get("agent_id") else interrupt_note(bin_dir)
@@ -277,6 +311,7 @@ def cmd_hook():
             return 0
         if data.get("agent_id"):            # a subagent's tool call: leave it to the main loop
             return 0
+        STEP.unlink(missing_ok=True)        # between tool calls Claude is thinking
         if INTERRUPT.exists():
             if SCRIPT_MARK + "bin/" not in command:   # reply.sh means it is being handled
                 emit_context(event, interrupt_note(bin_dir))
@@ -329,7 +364,7 @@ def cmd_stop(quick=False, quiet=False):
     kill(read_pid(SPEAKING))                # a `say` still talking
     kill(read_pid(SPEAK_PID))
     kill(read_pid(SERVER_PID))
-    for p in (INBOX, OUTBOX, CURSOR, CURSOR_LOCK, STOP_FLAG, SPEAKING, BARGED, WORKING, INTERRUPT,
+    for p in (INBOX, OUTBOX, CURSOR, CURSOR_LOCK, STOP_FLAG, SPEAKING, BARGED, WORKING, INTERRUPT, STEP, CUE_AT,
               LISTEN_PID, SPEAK_PID, SERVER_PID, HEARTBEAT, LAST_HEARD,
               RT / "listen.ready", RT / "listen.device", RT / "silent.aiff"):
         p.unlink(missing_ok=True)

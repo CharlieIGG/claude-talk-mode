@@ -57,7 +57,7 @@ def clean(text):
 
 def is_junk(text):
     t = text.lower().strip(" .,!?-")
-    return not t or t in JUNK
+    return not t or t in JUNK or not re.search(r"[a-z0-9]", t)   # e.g. a lone "♪"
 
 
 def normalize(text):
@@ -82,20 +82,39 @@ def said_alone(text, phrases):
     return False
 
 
+CUE_ECHO_S = 2.0                           # a feedback sound (padded) lasts about this long
+OUTPUT_CHECK_S = 5                         # how often the output device is looked up
+
+
+def audio_devices():
+    proc = subprocess.run(["system_profiler", "SPAudioDataType", "-json"],
+                          capture_output=True, text=True)
+    try:
+        return json.loads(proc.stdout)["SPAudioDataType"][0]["_items"]
+    except (ValueError, KeyError, IndexError):
+        return []
+
+
+def output_on_headphones():
+    """(device name, True if it is headphones) for the current macOS output. Bluetooth
+    and anything named headphones/headset counts; built-in or other speakers do not."""
+    for dev in audio_devices():
+        if dev.get("coreaudio_default_audio_output_device") == "spaudio_yes":
+            name = dev.get("_name", "")
+            bluetooth = "bluetooth" in dev.get("coreaudio_device_transport", "")
+            return name, bluetooth or any(w in name.lower() for w in ("headphone", "headset"))
+    return "unknown", False
+
+
 def input_device(cfg):
     """The configured microphone, or with "default" whatever macOS currently uses
     as input (e.g. the earbuds while they are worn)."""
     name = cfg["audio"].get("input_device") or "default"
     if name != "default":
         return name
-    proc = subprocess.run(["system_profiler", "SPAudioDataType", "-json"],
-                          capture_output=True, text=True)
-    try:
-        for dev in json.loads(proc.stdout)["SPAudioDataType"][0]["_items"]:
-            if dev.get("coreaudio_default_audio_input_device") == "spaudio_yes":
-                return dev["_name"]
-    except (ValueError, KeyError, IndexError):
-        pass
+    for dev in audio_devices():
+        if dev.get("coreaudio_default_audio_input_device") == "spaudio_yes":
+            return dev.get("_name", "0")
     return "0"                                         # first audio input device
 
 
@@ -156,7 +175,10 @@ def main(argv):
     file_path = argv[argv.index("--file") + 1] if "--file" in argv else None
     cfg = tc.load_config()
     vad = cfg["vad"]
-    barge_in = bool(cfg.get("barge_in"))
+    barge_setting = cfg.get("barge_in", "auto")
+    # barge[0]: talking over Claude stops its voice. Only safe with headphones; on
+    # speakers the mic hears Claude's own voice, so it is ignored instead.
+    barge = [barge_setting is True]
     stop_phrases = [normalize(p) for p in cfg.get("stop_phrases", [])]
     interrupt_phrases = [normalize(p) for p in cfg.get("interrupt_phrases", [])]
     idle_s = cfg["session"]["idle_minutes"] * 60
@@ -168,6 +190,20 @@ def main(argv):
 
     proc = open_source(cfg, file_path)
     stopping = threading.Event()
+
+    def watch_output():
+        """With barge_in "auto", follow the output device (earbuds come and go)."""
+        last = None
+        while not stopping.is_set():
+            name, phones = output_on_headphones()
+            barge[0] = phones
+            if (name, phones) != last:
+                tc.log(f"[listen] output: {name}, talking over Claude "
+                       + ("stops its voice" if phones else "is off (speakers, echo protection)"))
+                last = (name, phones)
+            stopping.wait(OUTPUT_CHECK_S)
+    if barge_setting == "auto" and not file_path:
+        threading.Thread(target=watch_output, daemon=True).start()
 
     def on_term(signum, _frame):
         raise SystemExit(0)
@@ -246,9 +282,12 @@ def main(argv):
                     break
 
             speaking = tc.SPEAKING.exists()
+            barge_in = barge[0]
             if speaking and not barge_in:                  # speakers: ignore our own voice
                 preroll, voiced, triggered, speech_frames, silence = [], [], False, 0, 0
                 continue
+            if not barge_in and not triggered and tc.age(tc.CUE_AT) < CUE_ECHO_S:
+                continue                                   # ...and our own sounds
 
             level = rms(frame)
             loudest = max(loudest, level)
