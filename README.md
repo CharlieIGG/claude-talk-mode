@@ -144,7 +144,7 @@ active microphone, a double tap stays "next track".
 |---|---|
 | `audio.input_device` | `default` = the microphone macOS currently uses (your earbuds while you wear them, so you can walk around), or a fixed device name from `ffmpeg -f avfoundation -list_devices true -i ""`. A Bluetooth earbud microphone switches the earbuds to call-quality audio; the built-in microphone keeps full quality but only hears you near the laptop. |
 | `vad.silence_ms` | Pause that ends your turn. |
-| `vad.min_threshold`, `vad.noise_multiplier` | How loud counts as speech. The room is measured at start; raise these if background noise triggers it. |
+| `vad.min_threshold`, `vad.noise_multiplier` | How loud counts as speech. The room is measured at start and re-measured from the quiet between turns (so a noisy start-up can't leave it deaf, and it adapts when the room gets louder or quieter); raise these if background noise still triggers it. |
 | `vad.barge_in_ms` | How long you must talk before Claude's voice stops (so a cough doesn't). |
 | `barge_in` | `"auto"` (default) checks the macOS output every 5 seconds: on headphones (Bluetooth, or a device named headphones/headset) talking over Claude stops its voice; on speakers that is switched off and the microphone ignores Claude's own voice and sounds, so it cannot hear itself. `true` / `false` force one behaviour. |
 | `stt.model`, `stt.language`, `stt.port` | Whisper model, language and local port. |

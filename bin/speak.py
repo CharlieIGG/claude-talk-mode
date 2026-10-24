@@ -36,12 +36,15 @@ def say(text, tts):
         cmd[1:1] = ["-o", str(tc.RT / "silent.aiff")]
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
     tc.SPEAKING.write_text(str(p.pid))
+    # Trailing silence keeps the audio stream open until Bluetooth headphones,
+    # which lag behind, have played the last words; otherwise they get cut off.
+    # Speakers don't lag, and there the mic is deaf while we speak (echo
+    # protection), so padding would only make the user wait to answer.
+    speakers = tc.ON_SPEAKERS.exists()
     try:
-        # Trailing silence keeps the audio stream open until Bluetooth headphones,
-        # which lag behind, have played the last words; otherwise they get cut off.
-        p.communicate((text + " [[slnc 1000]]").encode())
+        p.communicate((text + ("" if speakers else " [[slnc 1000]]")).encode())
     finally:
-        time.sleep(0.25)                                   # let the audio tail decay
+        time.sleep(0.1 if speakers else 0.25)              # let the audio tail decay
         tc.SPEAKING.unlink(missing_ok=True)
     return p.returncode
 

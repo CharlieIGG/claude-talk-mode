@@ -31,6 +31,7 @@ OWNER = RT / "owner_session"        # Claude Code session id that started talk m
 HEARTBEAT = RT / "heartbeat"        # touched whenever the owning session is active
 LAST_HEARD = RT / "last_heard"      # touched whenever the user says something
 STOP_FLAG = RT / "stop"             # contains the reason the session should end
+ON_SPEAKERS = RT / "on_speakers"    # exists while macOS plays through speakers (barge_in "auto")
 CUE_AT = RT / "cue_at"              # touched whenever a feedback sound starts
 SPEAKING = RT / "speaking.lock"     # contains the pid of the running `say`
 BARGED = RT / "barged"              # the user talked over the speaker
@@ -364,7 +365,7 @@ def cmd_stop(quick=False, quiet=False):
     kill(read_pid(SPEAKING))                # a `say` still talking
     kill(read_pid(SPEAK_PID))
     kill(read_pid(SERVER_PID))
-    for p in (INBOX, OUTBOX, CURSOR, CURSOR_LOCK, STOP_FLAG, SPEAKING, BARGED, WORKING, INTERRUPT, STEP, CUE_AT,
+    for p in (INBOX, OUTBOX, CURSOR, CURSOR_LOCK, STOP_FLAG, SPEAKING, BARGED, WORKING, INTERRUPT, STEP, CUE_AT, ON_SPEAKERS,
               LISTEN_PID, SPEAK_PID, SERVER_PID, HEARTBEAT, LAST_HEARD,
               RT / "listen.ready", RT / "listen.device", RT / "silent.aiff"):
         p.unlink(missing_ok=True)

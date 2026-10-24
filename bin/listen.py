@@ -33,6 +33,7 @@ SR = 16000
 FRAME_MS = 30
 FRAME_BYTES = SR * FRAME_MS // 1000 * 2
 CALIBRATE_FRAMES = 20                      # ~0.6 s of room noise
+RECALIBRATE_FRAMES = 167                   # ~5 s of quiet between turns, rechecked every second
 SETTLE_FRAMES = 33                         # ~1 s ignored while a Bluetooth mic switches on
 STALL_S = 2.0                              # no audio for this long: reopen the mic
 PREROLL_FRAMES = 10                        # ~0.3 s kept before speech starts
@@ -197,6 +198,10 @@ def main(argv):
         while not stopping.is_set():
             name, phones = output_on_headphones()
             barge[0] = phones
+            if phones:
+                tc.ON_SPEAKERS.unlink(missing_ok=True)
+            else:
+                tc.touch(tc.ON_SPEAKERS)
             if (name, phones) != last:
                 tc.log(f"[listen] output: {name}, talking over Claude "
                        + ("stops its voice" if phones else "is off (speakers, echo protection)"))
@@ -253,6 +258,11 @@ def main(argv):
         threshold = max(vad["min_threshold"], floor * vad["noise_multiplier"])
         (tc.RT / "listen.ready").write_text(f"{threshold:.4f}")
         tc.log(f"[listen] ready: noise floor {floor:.4f}, threshold {threshold:.4f}")
+        # The start-up measurement can catch a noisy moment (or the user already
+        # talking) and leave the threshold too high for the whole session. So the
+        # room is re-measured from the quiet between turns: the 10th percentile
+        # ignores brief sounds, and the threshold follows the room up and down.
+        quiet = []
 
         preroll, voiced = [], []
         triggered, interrupted = False, False
@@ -293,6 +303,14 @@ def main(argv):
             loudest = max(loudest, level)
             loud = level >= threshold
             if not triggered:
+                quiet = (quiet + [level])[-RECALIBRATE_FRAMES:]
+                if n % 33 == 0 and len(quiet) == RECALIBRATE_FRAMES:
+                    floor = sorted(quiet)[RECALIBRATE_FRAMES // 10]
+                    new = max(vad["min_threshold"], floor * vad["noise_multiplier"])
+                    if abs(new - threshold) > 0.2 * threshold:
+                        tc.log(f"[listen] room re-measured: noise floor {floor:.4f}, "
+                               f"threshold {threshold:.4f} -> {new:.4f}")
+                        threshold = new
                 preroll = (preroll + [frame])[-PREROLL_FRAMES:]
                 if loud:
                     triggered, voiced, preroll = True, preroll, []
