@@ -291,6 +291,9 @@ def main(argv):
                     tc.request_stop("idle")
                     break
 
+            if tc.PAUSED.exists():                         # microphone key: not listening
+                preroll, voiced, triggered, speech_frames, silence = [], [], False, 0, 0
+                continue
             speaking = tc.SPEAKING.exists()
             barge_in = barge[0]
             if speaking and not barge_in:                  # speakers: ignore our own voice

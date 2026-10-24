@@ -52,7 +52,29 @@ if [ ! -f "$RT/listen.ready" ]; then
   exit 1
 fi
 touch "$RT/active"     # only now, so hooks never see "active" without a listener
+
+# Keyboard keys (microphone key = pause listening, moon key = stop the voice),
+# built on first use and rebuilt when the source changes. Optional: talk mode
+# works without them.
+keys=""
+if command -v swiftc >/dev/null; then
+  if [ ! -x state/talkkeys ] || [ bin/talkkeys.swift -nt state/talkkeys ]; then
+    mkdir -p state
+    swiftc -O bin/talkkeys.swift -o state/talkkeys >>logs/keys.log 2>&1 || rm -f state/talkkeys
+  fi
+  if [ -x state/talkkeys ]; then
+    nohup state/talkkeys </dev/null >>logs/keys.log 2>&1 &
+    echo $! > "$RT/keys.pid"
+    sleep 0.3
+    kill -0 "$(cat "$RT/keys.pid")" 2>/dev/null && keys=1
+  fi
+fi
 echo "Talk mode is on. Microphone: $(cat "$RT/listen.device" 2>/dev/null || echo unknown), speech threshold $(cat "$RT/listen.ready")."
+if [ -n "$keys" ]; then
+  echo "Keys: the microphone key (F5) pauses or resumes listening, the moon key (F6) stops the voice."
+else
+  echo "Warning: the keyboard keys are not available, see logs/keys.log."
+fi
 # macOS keeps an input volume per microphone, and apps (e.g. Teams) can lower it;
 # at 21% the built-in mic missed normal speech from a few steps away.
 level="$(osascript -e 'input volume of (get volume settings)' 2>/dev/null || true)"

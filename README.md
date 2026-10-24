@@ -88,6 +88,11 @@ and settings, so re-run it if you move the folder.
   busy. You hear a "Submarine" sound, and from then on every tool call Claude tries is
   refused (its subagents' too) until it has asked you what you want. A command that is
   already running still finishes first, and so does a stretch where Claude only writes.
+- **Keyboard keys** (while talk mode is on; otherwise they keep their normal macOS
+  function): the **microphone key (F5)** pauses or resumes listening ("Muted" /
+  "Listening"; other apps keep the microphone), the **moon key (F6)** stops Claude's
+  voice mid-sentence and drops what it had queued. Built with `swiftc` on first start
+  (`state/talkkeys`, log in `logs/keys.log`); talk mode works without them.
 - **Stop:** say "stop talk mode" (the microphone closes immediately), press Esc and then
   type anything, or stay silent for 10 minutes.
 - **Permission prompts:** if Claude Code asks for approval during talk mode, you hear a

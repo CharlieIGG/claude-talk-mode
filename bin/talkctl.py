@@ -5,6 +5,7 @@ Subcommands:
   wait [SECONDS]   block until the user finishes an utterance, print it, exit
   reply TEXT       queue TEXT to be spoken aloud
   hook             Claude Code hook entry point (reads the hook JSON on stdin)
+  key mute|quiet   keyboard keys (talkkeys): pause/resume listening, stop the voice
   stop [--quick]   end talk mode: close the mic, stop speaker and Whisper server
   status           print what is running
 
@@ -38,6 +39,8 @@ BARGED = RT / "barged"              # the user talked over the speaker
 WORKING = RT / "working"            # Claude is handling a turn (not listening)
 LISTEN_PID = RT / "listen.pid"
 SPEAK_PID = RT / "speak.pid"
+PAUSED = RT / "paused"              # the user paused listening with the microphone key
+KEYS_PID = RT / "keys.pid"          # the talkkeys keyboard watcher
 SERVER_PID = RT / "server.pid"      # only present if start.sh started the server
 STEP = RT / "step"                  # what Claude is doing right now, for spoken status updates
 INTERRUPT = RT / "interrupt"        # what the user said to interrupt Claude; cleared once Claude listens again
@@ -247,6 +250,34 @@ def interrupt_note(bin_dir):
             "other tool call is refused until you do.")
 
 
+def stop_voice():
+    """What talking over Claude does with headphones: stop the voice and drop
+    replies queued so far."""
+    pid = read_pid(SPEAKING)
+    if alive(pid):
+        touch(BARGED)
+        kill(pid)
+
+
+def cmd_key(action):
+    if not ACTIVE.exists():
+        return 0
+    if action == "quiet":
+        stop_voice()
+    elif action == "mute":
+        if PAUSED.exists():
+            PAUSED.unlink(missing_ok=True)
+            cmd_reply("Listening.")
+        else:
+            PAUSED.touch()
+            stop_voice()
+            deadline = time.time() + 1.5    # else speak.py drops "Muted" with the stopped reply
+            while BARGED.exists() and time.time() < deadline:
+                time.sleep(0.05)
+            cmd_reply("Muted.")
+    return 0
+
+
 def emit_context(event, text):
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": event, "additionalContext": text}}))
@@ -364,9 +395,10 @@ def cmd_stop(quick=False, quiet=False):
             time.sleep(0.1)
     kill(read_pid(SPEAKING))                # a `say` still talking
     kill(read_pid(SPEAK_PID))
+    kill(read_pid(KEYS_PID))
     kill(read_pid(SERVER_PID))
     for p in (INBOX, OUTBOX, CURSOR, CURSOR_LOCK, STOP_FLAG, SPEAKING, BARGED, WORKING, INTERRUPT, STEP, CUE_AT, ON_SPEAKERS,
-              LISTEN_PID, SPEAK_PID, SERVER_PID, HEARTBEAT, LAST_HEARD,
+              PAUSED, KEYS_PID, LISTEN_PID, SPEAK_PID, SERVER_PID, HEARTBEAT, LAST_HEARD,
               RT / "listen.ready", RT / "listen.device", RT / "silent.aiff"):
         p.unlink(missing_ok=True)
     for wav in RT.glob("utt-*.wav"):
@@ -380,7 +412,7 @@ def cmd_status():
     print(f"active:   {ACTIVE.exists()}")
     print(f"owner:    {OWNER.read_text().strip() if OWNER.exists() else '-'}")
     for name, path in (("listener", LISTEN_PID), ("speaker", SPEAK_PID),
-                       ("whisper", SERVER_PID)):
+                       ("keys", KEYS_PID), ("whisper", SERVER_PID)):
         pid = read_pid(path)
         print(f"{name + ':':9} {'running (pid %d)' % pid if alive(pid) else 'not running'}")
     if STOP_FLAG.exists():
@@ -399,6 +431,8 @@ def main(argv):
         return cmd_reply(" ".join(rest))
     if cmd == "hook":
         return cmd_hook()
+    if cmd == "key" and rest:
+        return cmd_key(rest[0])
     if cmd == "stop":
         return cmd_stop(quick="--quick" in rest)
     if cmd == "status":
