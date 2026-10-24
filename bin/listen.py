@@ -269,6 +269,7 @@ def main(argv):
         speech_frames, silence = 0, 0
         n = 0
         loudest = 0.0
+        reopened = []                                  # times the mic stream was reopened
         while not stopping.is_set():
             frame = read_frame(proc.stdout, None if file_path else STALL_S)
             if frame is STALLED:
@@ -280,11 +281,28 @@ def main(argv):
                     tc.log("[listen] turn dropped by the stall")
                 preroll, voiced, triggered, speech_frames, silence = [], [], False, 0, 0
                 continue
+            if frame is None and not file_path:
+                # ffmpeg ends when macOS switches the audio device (earbuds come
+                # or go); reopen with whatever is now the default microphone.
+                reopened = [t for t in reopened if time.time() - t < 30] + [time.time()]
+                if len(reopened) > 5:
+                    tc.log("[listen] the microphone keeps closing, giving up")
+                    break
+                tc.log("[listen] microphone stream ended (device change?), reopening")
+                proc.wait()
+                time.sleep(0.5)
+                proc = open_source(cfg, file_path)
+                preroll, voiced, triggered, speech_frames, silence = [], [], False, 0, 0
+                continue
             if frame is None:
                 break
             n += 1
             if managed and n % 33 == 0:                    # about once a second
                 if not tc.ACTIVE.exists():
+                    break
+                if not tc.owner_alive():
+                    tc.log("[listen] the Claude Code session that started talk mode is gone, stopping")
+                    tc.request_stop("owner-gone")
                     break
                 if tc.age(tc.HEARTBEAT) > idle_s:
                     tc.log("[listen] Claude Code has been quiet too long, stopping")

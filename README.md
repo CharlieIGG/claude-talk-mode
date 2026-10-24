@@ -93,6 +93,15 @@ and settings, so re-run it if you move the folder.
   "Listening"; other apps keep the microphone), the **moon key (F6)** stops Claude's
   voice mid-sentence and drops what it had queued. Built with `swiftc` on first start
   (`state/talkkeys`, log in `logs/keys.log`); talk mode works without them.
+- **Which tab is talking:** while talk mode is on, its terminal tab title gets a 🎙 in
+  front of the session's title ("🎙 Fix login bug"), in any terminal. The title comes
+  from Claude Code's session title (`/rename` wins) and is re-applied every 0.3 seconds,
+  because Claude Code keeps rewriting it. A tab you renamed by hand in the terminal keeps your
+  name (terminals don't let programs read it, and iTerm gives it priority).
+- **One session at a time:** `/talk` in a second Claude Code session is refused while
+  the first one still has talk mode on. If the session that owns talk mode ends in any
+  way (crash, closed terminal, killed process), talk mode shuts itself down within about
+  a second and the next session can start it.
 - **Stop:** say "stop talk mode" (the microphone closes immediately), press Esc and then
   type anything, or stay silent for 10 minutes.
 - **Permission prompts:** if Claude Code asks for approval during talk mode, you hear a

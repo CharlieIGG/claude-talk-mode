@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -96,6 +97,12 @@ def main():
     tc.log(f"[speak] ready (voice: {tts.get('voice') or 'system default'})")
     started = time.time()
     last_tick = last_spoke = last_status = 0.0
+
+    def keep_title():                                      # 🎙 in the tab title, see talkctl
+        while True:
+            tc.refresh_title()
+            time.sleep(0.3)
+    threading.Thread(target=keep_title, daemon=True).start()
     while True:
         if status_due(status_every, last_status, last_spoke):
             say(speakable(status_text()), tts)
@@ -104,7 +111,7 @@ def main():
             tc.play_cue("working", cfg)
             last_tick = time.time()
         if time.time() - started > 10 and not tc.listener_alive():
-            if tc.age(tc.STOP_FLAG) > 90 or not tc.STOP_FLAG.exists():
+            if tc.age(tc.STOP_FLAG) > 90 or not tc.STOP_FLAG.exists() or not tc.owner_alive():
                 tc.log("[speak] listener gone, shutting talk mode down")
                 tc.cmd_stop(quick=True, quiet=True)
                 return 0

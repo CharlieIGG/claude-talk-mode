@@ -6,6 +6,8 @@ Subcommands:
   reply TEXT       queue TEXT to be spoken aloud
   hook             Claude Code hook entry point (reads the hook JSON on stdin)
   key mute|quiet   keyboard keys (talkkeys): pause/resume listening, stop the voice
+  claim            before start: fail if another live Claude Code session has talk
+                   mode on; else print this session's Claude Code pid
   stop [--quick]   end talk mode: close the mic, stop speaker and Whisper server
   status           print what is running
 
@@ -29,6 +31,7 @@ CURSOR_LOCK = RT / "inbox.lock"
 OUTBOX = RT / "outbox.jsonl"        # what Claude wants spoken
 ACTIVE = RT / "active"              # exists while talk mode is on
 OWNER = RT / "owner_session"        # Claude Code session id that started talk mode
+OWNER_PID = RT / "owner_pid"        # its Claude Code process; talk mode ends when it dies
 HEARTBEAT = RT / "heartbeat"        # touched whenever the owning session is active
 LAST_HEARD = RT / "last_heard"      # touched whenever the user says something
 STOP_FLAG = RT / "stop"             # contains the reason the session should end
@@ -40,6 +43,8 @@ WORKING = RT / "working"            # Claude is handling a turn (not listening)
 LISTEN_PID = RT / "listen.pid"
 SPEAK_PID = RT / "speak.pid"
 PAUSED = RT / "paused"              # the user paused listening with the microphone key
+TERMINAL_TTY = RT / "terminal_tty"  # terminal of the session that owns talk mode
+TITLE = RT / "title"                # its tab title without the microphone
 KEYS_PID = RT / "keys.pid"          # the talkkeys keyboard watcher
 SERVER_PID = RT / "server.pid"      # only present if start.sh started the server
 STEP = RT / "step"                  # what Claude is doing right now, for spoken status updates
@@ -84,6 +89,8 @@ def alive(pid):
 
 
 def kill(pid, sig=signal.SIGTERM):
+    if pid == os.getpid():                  # speak.py runs cmd_stop itself; finish it first
+        return
     if alive(pid):
         try:
             os.kill(pid, sig)
@@ -250,6 +257,134 @@ def interrupt_note(bin_dir):
             "other tool call is refused until you do.")
 
 
+# --- tab title ----------------------------------------------------------------
+# While talk mode is on, its tab title gets a microphone in front: "🎙 <title>".
+# Terminals don't let programs read the title, but Claude Code builds it from the
+# session's title, which it saves in the transcript (a /rename wins over the
+# generated one). Claude Code rewrites the title when it switches between working
+# and idle, more often than any hook runs, so the hooks only record the title and
+# speak.py re-applies it every second while talk mode is on.
+
+MIC = "\U0001F399"
+
+
+def session_title(transcript_path):
+    try:
+        data = Path(transcript_path).read_bytes()
+    except (OSError, TypeError):
+        return ""
+    for kind, field in ((b'"type":"custom-title"', "customTitle"), (b'"type":"ai-title"', "aiTitle")):
+        i = data.rfind(kind)
+        if i < 0:
+            continue
+        start = data.rfind(b"\n", 0, i) + 1
+        end = data.find(b"\n", i)
+        try:
+            title = json.loads(data[start:end if end >= 0 else None]).get(field) or ""
+        except ValueError:
+            continue
+        if title:
+            return title
+    return ""
+
+
+def ps_fields(pid):
+    """(parent pid, tty, command name) of a process, or None."""
+    out = subprocess.run(["ps", "-o", "ppid=,tty=,comm=", "-p", str(pid)],
+                         capture_output=True, text=True).stdout.split(None, 2)
+    return (int(out[0]), out[1], out[2].strip()) if len(out) == 3 else None
+
+
+def is_claude(pid):
+    fields = pid and ps_fields(pid)
+    return bool(fields) and os.path.basename(fields[2]) == "claude"
+
+
+def claude_pid():
+    """The Claude Code process this command runs under, or None."""
+    pid = os.getppid()
+    while pid > 1:
+        fields = ps_fields(pid)
+        if not fields:
+            return None
+        if os.path.basename(fields[2]) == "claude":
+            return pid
+        pid = fields[0]
+    return None
+
+
+def owner_alive():
+    """False once the Claude Code session that started talk mode has gone, even if
+    it crashed or its terminal was closed. Unknown owner: assume alive."""
+    pid = read_pid(OWNER_PID)
+    return pid is None or alive(pid)
+
+
+def terminal_tty():
+    """The terminal of the Claude Code session that owns talk mode (cached)."""
+    try:
+        return TERMINAL_TTY.read_text().strip()
+    except OSError:
+        pass
+    owner = read_pid(OWNER_PID)
+    fields = owner and ps_fields(owner)
+    if fields and fields[1] not in ("??", "-"):
+        TERMINAL_TTY.write_text("/dev/" + fields[1])
+        return "/dev/" + fields[1]
+    pid = os.getppid()
+    while pid > 1:
+        out = subprocess.run(["ps", "-o", "ppid=,tty=", "-p", str(pid)],
+                             capture_output=True, text=True).stdout.split()
+        if len(out) < 2:
+            return ""
+        if out[1] not in ("??", "-"):
+            tty = "/dev/" + out[1]
+            TERMINAL_TTY.write_text(tty)
+            return tty
+        pid = int(out[0])
+    return ""
+
+
+def write_title(text, tty=None):
+    tty = tty or terminal_tty()
+    if not tty or not text:
+        return
+    try:
+        with open(tty, "w") as t:
+            t.write(f"\033]0;{text}\007")
+    except OSError:
+        pass
+
+
+def mark_title(transcript_path):
+    title = session_title(transcript_path)
+    if title or not TITLE.exists():
+        TITLE.write_text(title)
+    terminal_tty()                          # found from the hook, which runs under Claude Code
+    refresh_title()
+
+
+def refresh_title():
+    if not ACTIVE.exists():
+        return
+    try:
+        tty = TERMINAL_TTY.read_text().strip()
+        title = TITLE.read_text().strip()
+    except OSError:
+        return
+    write_title(f"{MIC} {title}" if title else MIC, tty)
+
+
+def unmark_title():
+    """Back to the plain title; Claude Code takes over again on its next update."""
+    try:
+        tty = TERMINAL_TTY.read_text().strip()
+        title = TITLE.read_text().strip()
+    except OSError:
+        return
+    write_title(title, tty)
+
+
 def stop_voice():
     """What talking over Claude does with headphones: stop the voice and drop
     replies queued so far."""
@@ -312,6 +447,9 @@ def cmd_hook():
 
     touch(HEARTBEAT)
     bin_dir = ROOT / "bin"
+
+    if event == "PreToolUse" and not data.get("agent_id"):
+        mark_title(data.get("transcript_path"))
 
     if event == "UserPromptSubmit":
         if (data.get("prompt") or "").lstrip().startswith("/talk"):
@@ -383,10 +521,26 @@ def cmd_hook():
     return 0
 
 
+def cmd_claim():
+    """One talk mode at a time: refuse while another Claude Code session that is
+    still running has it on. A crashed owner doesn't block (its pid is gone)."""
+    me = claude_pid()
+    other = read_pid(OWNER_PID)
+    if ACTIVE.exists() and other and other != me and is_claude(other):
+        fields = ps_fields(other)
+        where = f" in terminal {fields[1]}" if fields and fields[1] not in ("??", "-") else ""
+        log(f"Talk mode is already on in another Claude Code session (process {other}{where}). "
+            "End it there first: say \"stop talk mode\", or run scripts/stop.sh.")
+        return 3
+    print(me or "")
+    return 0
+
+
 def cmd_stop(quick=False, quiet=False):
     """End talk mode. Without --quick, let a final spoken reply finish first."""
     ACTIVE.unlink(missing_ok=True)
     OWNER.unlink(missing_ok=True)
+    unmark_title()
     kill(read_pid(LISTEN_PID))              # listener closes ffmpeg, i.e. the mic
     if not quick:
         time.sleep(0.5)                     # give speak.py time to pick up a goodbye
@@ -398,7 +552,7 @@ def cmd_stop(quick=False, quiet=False):
     kill(read_pid(KEYS_PID))
     kill(read_pid(SERVER_PID))
     for p in (INBOX, OUTBOX, CURSOR, CURSOR_LOCK, STOP_FLAG, SPEAKING, BARGED, WORKING, INTERRUPT, STEP, CUE_AT, ON_SPEAKERS,
-              PAUSED, KEYS_PID, LISTEN_PID, SPEAK_PID, SERVER_PID, HEARTBEAT, LAST_HEARD,
+              PAUSED, KEYS_PID, TERMINAL_TTY, TITLE, OWNER_PID, LISTEN_PID, SPEAK_PID, SERVER_PID, HEARTBEAT, LAST_HEARD,
               RT / "listen.ready", RT / "listen.device", RT / "silent.aiff"):
         p.unlink(missing_ok=True)
     for wav in RT.glob("utt-*.wav"):
@@ -431,6 +585,8 @@ def main(argv):
         return cmd_reply(" ".join(rest))
     if cmd == "hook":
         return cmd_hook()
+    if cmd == "claim":
+        return cmd_claim()
     if cmd == "key" and rest:
         return cmd_key(rest[0])
     if cmd == "stop":

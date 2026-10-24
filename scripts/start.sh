@@ -10,6 +10,8 @@ for b in whisper-server ffmpeg say curl jq; do
   command -v "$b" >/dev/null || { echo "Missing: $b (see README.md)" >&2; exit 1; }
 done
 
+# One talk mode at a time: refuse while another running Claude Code session has it.
+owner="$("${PY[@]}" bin/talkctl.py claim)" || exit 1
 "${PY[@]}" bin/talkctl.py stop --quick >/dev/null 2>&1 || true   # clear any old session
 mkdir -p "$RT" logs
 chmod 700 "$RT"
@@ -35,6 +37,7 @@ fi
 echo 0 > "$RT/inbox.cursor"
 rm -f "$RT/stop" "$RT/interrupt" "$RT/barged" "$RT/speaking.lock" "$RT/owner_session" "$RT/listen.ready"
 touch "$RT/heartbeat" "$RT/last_heard"
+[ -n "$owner" ] && echo "$owner" > "$RT/owner_pid"
 
 nohup "${PY[@]}" bin/listen.py </dev/null >>logs/listen.log 2>&1 &
 echo $! > "$RT/listen.pid"
