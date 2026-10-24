@@ -119,6 +119,20 @@ def input_device(cfg):
     return "0"                                         # first audio input device
 
 
+def close_source(proc):
+    """Stop ffmpeg without hanging: on a Bluetooth microphone that has just
+    vanished it may ignore SIGTERM, and waiting for it would freeze the listener."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            tc.log("[listen] old microphone process won't exit, leaving it behind")
+
+
 def open_source(cfg, file_path):
     if file_path:
         src = ["-re", "-i", file_path]                 # real-time pace, like a mic
@@ -210,6 +224,18 @@ def main(argv):
     if barge_setting == "auto" and not file_path:
         threading.Thread(target=watch_output, daemon=True).start()
 
+    # With input_device "default", follow macOS's input: when the earbuds connect,
+    # the old microphone keeps streaming, so switch over explicitly.
+    mic_changed = threading.Event()
+
+    def watch_input():
+        while not stopping.wait(OUTPUT_CHECK_S):
+            current = (tc.RT / "listen.device").read_text() if (tc.RT / "listen.device").exists() else ""
+            if input_device(cfg) != current:
+                mic_changed.set()
+    if (cfg["audio"].get("input_device") or "default") == "default" and not file_path:
+        threading.Thread(target=watch_input, daemon=True).start()
+
     def on_term(signum, _frame):
         raise SystemExit(0)
     signal.signal(signal.SIGTERM, on_term)
@@ -272,10 +298,16 @@ def main(argv):
         reopened = []                                  # times the mic stream was reopened
         while not stopping.is_set():
             frame = read_frame(proc.stdout, None if file_path else STALL_S)
+            if mic_changed.is_set():
+                mic_changed.clear()
+                tc.log("[listen] macOS switched the microphone, following it")
+                close_source(proc)
+                proc = open_source(cfg, file_path)
+                preroll, voiced, triggered, speech_frames, silence = [], [], False, 0, 0
+                continue
             if frame is STALLED:
                 tc.log(f"[listen] no audio for {STALL_S:.0f}s, reopening the microphone")
-                proc.terminate()
-                proc.wait()
+                close_source(proc)
                 proc = open_source(cfg, file_path)
                 if triggered:
                     tc.log("[listen] turn dropped by the stall")
@@ -289,7 +321,7 @@ def main(argv):
                     tc.log("[listen] the microphone keeps closing, giving up")
                     break
                 tc.log("[listen] microphone stream ended (device change?), reopening")
-                proc.wait()
+                close_source(proc)
                 time.sleep(0.5)
                 proc = open_source(cfg, file_path)
                 preroll, voiced, triggered, speech_frames, silence = [], [], False, 0, 0
@@ -360,11 +392,7 @@ def main(argv):
         if file_path and triggered and speech_frames >= min_speech_frames:
             jobs.put((voiced, interrupted))                # recording ended mid-turn
     finally:
-        proc.terminate()                                   # releases the microphone
-        try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        close_source(proc)                                 # releases the microphone
         jobs.put(None)
         if "loudest" in locals():
             tc.log(f"[listen] loudest sound {loudest:.4f} (speech counts from {threshold:.4f})")
