@@ -53,3 +53,9 @@ if [ ! -f "$RT/listen.ready" ]; then
 fi
 touch "$RT/active"     # only now, so hooks never see "active" without a listener
 echo "Talk mode is on. Microphone: $(cat "$RT/listen.device" 2>/dev/null || echo unknown), speech threshold $(cat "$RT/listen.ready")."
+# macOS keeps an input volume per microphone, and apps (e.g. Teams) can lower it;
+# at 21% the built-in mic missed normal speech from a few steps away.
+level="$(osascript -e 'input volume of (get volume settings)' 2>/dev/null || true)"
+if [ -n "$level" ] && [ "$level" != "missing value" ] && [ "$level" -lt 50 ]; then
+  echo "Warning: the microphone's input volume is only $level%, so quiet or distant speech may be missed. Raise it in System Settings > Sound > Input (or: osascript -e 'set volume input volume 80')."
+fi

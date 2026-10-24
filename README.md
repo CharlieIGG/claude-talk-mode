@@ -171,7 +171,9 @@ active microphone, a double tap stays "next track".
 
 - **It doesn't react to your voice:** `logs/listen.log` shows each turn's start and end
   and "loudest sound X (speech counts from Y)". If X stays below Y, the microphone isn't
-  hearing you; check `audio.input_device` and your distance.
+  hearing you; check `audio.input_device`, your distance, and the microphone's input
+  volume in System Settings > Sound > Input (`start.sh` warns below 50%; apps like Teams
+  can lower it).
 - **Claude seems to stop listening:** look at the screen. Claude Code may be showing a
   permission prompt (you should hear the "approval" alert).
 - **Short sounds or last words missing on Bluetooth:** already handled with trailing
